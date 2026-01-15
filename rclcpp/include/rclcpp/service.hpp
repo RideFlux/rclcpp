@@ -356,7 +356,7 @@ public:
   {
     rcl_ret_t ret = rcl_send_response(get_service_handle().get(), &req_id, &response);
 
-    if (ret == RCL_RET_TIMEOUT) {
+    if (ret == RCL_RET_TIMEOUT || ret == RCL_RET_ERROR) {
       RCLCPP_WARN(
         node_logger_.get_child("rclcpp"),
         "failed to send response to %s (timeout): %s",
