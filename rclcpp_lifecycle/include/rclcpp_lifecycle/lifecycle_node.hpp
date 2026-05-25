@@ -520,6 +520,19 @@ public:
     const std::string & node_name,
     const std::string & namespace_) const;
 
+  /// Return a map of existing action names to list of action types for a specific node.
+  /**
+   * This function only considers action servers - not action clients.
+   *
+   * \param[in] node_name name of the node
+   * \param[in] namespace_ namespace of the node
+   */
+  RCLCPP_LIFECYCLE_PUBLIC
+  std::map<std::string, std::vector<std::string>>
+  get_action_names_and_types_by_node(
+    const std::string & node_name,
+    const std::string & namespace_) const;
+
   /// Return the number of publishers that are advertised on a given topic.
   /**
    * \sa rclcpp::Node::count_publishers

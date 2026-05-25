@@ -179,6 +179,20 @@ public:
     const std::string & node_name,
     const std::string & namespace_) const = 0;
 
+  /// Return a map of existing action names to list of action types for a specific node.
+  /**
+   * This function only considers action servers - not action clients.
+   *
+   * \param[in] node_name name of the node
+   * \param[in] namespace_ namespace of the node
+   */
+  RCLCPP_PUBLIC
+  virtual
+  std::map<std::string, std::vector<std::string>>
+  get_action_names_and_types_by_node(
+    const std::string & node_name,
+    const std::string & namespace_) const = 0;
+
   /// Return a vector of existing node names (string).
   RCLCPP_PUBLIC
   virtual

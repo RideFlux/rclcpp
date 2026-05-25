@@ -8,6 +8,7 @@ find_package(ament_cmake_ros REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(libstatistics_collector REQUIRED)
 find_package(rcl REQUIRED)
+find_package(rcl_action REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(rcl_yaml_param_parser REQUIRED)
 find_package(rcpputils REQUIRED)
@@ -178,6 +179,7 @@ target_link_libraries(${PROJECT_NAME} ${CMAKE_THREAD_LIBS_INIT})
 ament_target_dependencies(${PROJECT_NAME}
   "libstatistics_collector"
   "rcl"
+  "rcl_action"
   "rcl_yaml_param_parser"
   "rcpputils"
   "rcutils"
@@ -208,6 +210,7 @@ ament_export_targets(${PROJECT_NAME})
 
 ament_export_dependencies(libstatistics_collector)
 ament_export_dependencies(rcl)
+ament_export_dependencies(rcl_action)
 ament_export_dependencies(rcpputils)
 ament_export_dependencies(rcutils)
 ament_export_dependencies(builtin_interfaces)

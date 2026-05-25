@@ -908,6 +908,22 @@ public:
     const std::string & node_name,
     const std::string & namespace_) const;
 
+  /// Return a map of existing action names to list of action types for a specific node.
+  /**
+   * This function only considers action servers - not action clients.
+   * The returned names are the actual names used and do not have remap rules applied.
+   *
+   * \param[in] node_name name of the node.
+   * \param[in] namespace_ namespace of the node.
+   * \return a map of existing action names to list of action types.
+   * \throws std::runtime_error anything that rcl_error can throw.
+   */
+  RCLCPP_PUBLIC
+  std::map<std::string, std::vector<std::string>>
+  get_action_names_and_types_by_node(
+    const std::string & node_name,
+    const std::string & namespace_) const;
+
   RCLCPP_PUBLIC
   size_t
   count_publishers(const std::string & topic_name) const;
