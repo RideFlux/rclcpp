@@ -14,8 +14,10 @@
 
 #include <algorithm>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 
 #include "rcl/allocator.h"
 #include "rcl/error_handling.h"
@@ -34,6 +36,19 @@ using rclcpp::AnyExecutable;
 using rclcpp::Executor;
 using rclcpp::ExecutorOptions;
 using rclcpp::FutureReturnCode;
+
+namespace
+{
+struct SubscriptionStat
+{
+  uint64_t count{0};
+  std::chrono::system_clock::time_point last_received{};
+};
+
+std::unordered_map<std::string, SubscriptionStat> g_sub_stats;
+std::chrono::system_clock::time_point g_last_log_time{};
+constexpr std::chrono::seconds kLogThrottleDuration{1};
+}  // namespace
 
 Executor::Executor(const rclcpp::ExecutorOptions & options)
 : spinning(false),
@@ -301,18 +316,60 @@ Executor::execute_any_executable(AnyExecutable & any_exec)
     return;
   }
   if (any_exec.timer) {
+    RCLCPP_DEBUG(
+      rclcpp::get_logger("rclcpp"),
+      "[execute_any_executable] Job=Timer");
     execute_timer(any_exec.timer);
   }
   if (any_exec.subscription) {
+    auto topic_name = any_exec.subscription->get_topic_name();
+    if (std::string(topic_name).find("parameter_events") == std::string::npos) {
+      auto now = std::chrono::system_clock::now();
+      auto & stat = g_sub_stats[topic_name];
+      stat.count++;
+      stat.last_received = now;
+
+      if (now - g_last_log_time >= kLogThrottleDuration) {
+        g_last_log_time = now;
+        for (auto & kv : g_sub_stats) {
+          // Format last_received as seconds.nanoseconds since epoch
+          auto last_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            kv.second.last_received.time_since_epoch()).count();
+          auto last_sec = last_ns / 1'000'000'000LL;
+          auto last_frac_ns = last_ns % 1'000'000'000LL;
+          RCLCPP_DEBUG(
+            rclcpp::get_logger("rclcpp"),
+            "[execute_any_executable] Job=Subscription | topic=%s | count=%lu"
+            " | last_received=%lld.%09lld",
+            kv.first.c_str(),
+            kv.second.count,
+            last_sec,
+            last_frac_ns);
+          kv.second.count = 0;
+        }
+      }
+    }
     execute_subscription(any_exec.subscription);
   }
   if (any_exec.service) {
+    RCLCPP_DEBUG(
+      rclcpp::get_logger("rclcpp"),
+      "[execute_any_executable] Job=Service | service_name=%s",
+      any_exec.service->get_service_name());
     execute_service(any_exec.service);
   }
   if (any_exec.client) {
+    RCLCPP_DEBUG(
+      rclcpp::get_logger("rclcpp"),
+      "[execute_any_executable] Job=Client | service_name=%s",
+      any_exec.client->get_service_name());
     execute_client(any_exec.client);
   }
   if (any_exec.waitable) {
+    RCLCPP_DEBUG(
+      rclcpp::get_logger("rclcpp"),
+      "[execute_any_executable] Job=Waitable | waitable_addr=%p",
+      static_cast<const void *>(any_exec.waitable.get()));
     any_exec.waitable->execute();
   }
   // Reset the callback_group, regardless of type
