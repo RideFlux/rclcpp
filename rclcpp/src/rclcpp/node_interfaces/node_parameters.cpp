@@ -16,6 +16,7 @@
 
 #include <rcl_yaml_param_parser/parser.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -29,6 +30,7 @@
 
 #include "rcl_interfaces/srv/list_parameters.hpp"
 #include "rclcpp/create_publisher.hpp"
+#include "rclcpp/logging.hpp"
 #include "rclcpp/parameter_map.hpp"
 #include "rclcpp/scope_exit.hpp"
 #include "rcutils/logging_macros.h"
@@ -477,6 +479,37 @@ NodeParameters::set_parameters_atomically(const std::vector<rclcpp::Parameter> &
 
   rcl_interfaces::msg::SetParametersResult result;
 
+  const auto func_start = std::chrono::steady_clock::now();
+  double validate_ms = 0.0;
+  double declare_implicit_ms = 0.0;
+  double resolve_initial_ms = 0.0;
+  double collect_undeclare_ms = 0.0;
+  double set_atomically_ms = 0.0;
+  double update_staged_ms = 0.0;
+  double undeclare_ms = 0.0;
+  double build_event_ms = 0.0;
+  double publish_ms = 0.0;
+
+  auto elapsed_ms = [](const std::chrono::steady_clock::time_point & start) {
+      return std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+    };
+
+  auto log_timing = [&](const char * exit_point) {
+      RCLCPP_WARN(
+        rclcpp::get_logger("ParameterManager::applyParamManagerToServer"),
+        "set_parameters_atomically total: %.3f ms (exit: %s) - "
+        "validate: %.3f, declare_implicit: %.3f, resolve_initial: %.3f, "
+        "collect_undeclare: %.3f, set_atomically: %.3f, update_staged: %.3f, "
+        "undeclare: %.3f, build_event: %.3f, publish: %.3f",
+        elapsed_ms(func_start), exit_point,
+        validate_ms, declare_implicit_ms, resolve_initial_ms,
+        collect_undeclare_ms, set_atomically_ms, update_staged_ms,
+        undeclare_ms, build_event_ms, publish_ms);
+    };
+
+  auto validate_start = std::chrono::steady_clock::now();
+
   // Check if any of the parameters are read-only, or if any parameters are not
   // declared.
   // If not declared, keep track of them in order to declare them later, when
@@ -511,9 +544,12 @@ NodeParameters::set_parameters_atomically(const std::vector<rclcpp::Parameter> &
     if (parameter_info->second.descriptor.read_only) {
       result.successful = false;
       result.reason = "parameter '" + name + "' cannot be set because it is read-only";
+      validate_ms = elapsed_ms(validate_start);
+      log_timing("read_only_check");
       return result;
     }
   }
+  validate_ms = elapsed_ms(validate_start);
 
   // Declare parameters into a temporary "staging area", incase one of the declares fail.
   // We will use the staged changes as input to the "set atomically" action.
@@ -523,6 +559,7 @@ NodeParameters::set_parameters_atomically(const std::vector<rclcpp::Parameter> &
   rcl_interfaces::msg::ParameterEvent parameter_event_msg;
   parameter_event_msg.node = combined_name_;
   CallbacksContainerType empty_callback_container;
+  auto declare_implicit_start = std::chrono::steady_clock::now();
   for (auto parameter_to_be_declared : parameters_to_be_declared) {
     // This should not throw, because we validated the name and checked that
     // the parameter was not already declared.
@@ -540,9 +577,14 @@ NodeParameters::set_parameters_atomically(const std::vector<rclcpp::Parameter> &
     if (!result.successful) {
       // Declare failed, return knowing that nothing was changed because the
       // staged changes were not applied.
+      declare_implicit_ms = elapsed_ms(declare_implicit_start);
+      log_timing("declare_implicit_failed");
       return result;
     }
   }
+  declare_implicit_ms = elapsed_ms(declare_implicit_start);
+
+  auto resolve_initial_start = std::chrono::steady_clock::now();
 
   // If there were implicitly declared parameters, then we may need to copy the input parameters
   // and then assign the value that was selected after the declare (could be affected by the
@@ -570,6 +612,9 @@ NodeParameters::set_parameters_atomically(const std::vector<rclcpp::Parameter> &
       parameters_to_be_set = &parameters_copy;
     }
   }
+  resolve_initial_ms = elapsed_ms(resolve_initial_start);
+
+  auto collect_undeclare_start = std::chrono::steady_clock::now();
 
   // Collect parameters who will have had their type changed to
   // rclcpp::PARAMETER_NOT_SET so they can later be implicitly undeclared.
@@ -582,6 +627,9 @@ NodeParameters::set_parameters_atomically(const std::vector<rclcpp::Parameter> &
       }
     }
   }
+  collect_undeclare_ms = elapsed_ms(collect_undeclare_start);
+
+  auto set_atomically_start = std::chrono::steady_clock::now();
 
   // Set all of the parameters including the ones declared implicitly above.
   result = __set_parameters_atomically_common(
@@ -594,11 +642,15 @@ NodeParameters::set_parameters_atomically(const std::vector<rclcpp::Parameter> &
     // These callbacks are called once. When a callback returns an unsuccessful result,
     // the remaining aren't called.
     on_parameters_set_callback_);
+  set_atomically_ms = elapsed_ms(set_atomically_start);
 
   // If not successful, then stop here.
   if (!result.successful) {
+    log_timing("set_atomically_failed");
     return result;
   }
+
+  auto update_staged_start = std::chrono::steady_clock::now();
 
   // If successful, then update the parameter infos from the implicitly declared parameter's.
   for (const auto & kv_pair : staged_parameter_changes) {
@@ -610,6 +662,9 @@ NodeParameters::set_parameters_atomically(const std::vector<rclcpp::Parameter> &
     // change other things from the ParameterInfo.
     parameters_[kv_pair.first] = kv_pair.second;
   }
+  update_staged_ms = elapsed_ms(update_staged_start);
+
+  auto undeclare_start = std::chrono::steady_clock::now();
 
   // Undeclare parameters that need to be.
   for (auto parameter_to_undeclare : parameters_to_be_undeclared) {
@@ -623,6 +678,9 @@ NodeParameters::set_parameters_atomically(const std::vector<rclcpp::Parameter> &
       parameters_.erase(it);
     }
   }
+  undeclare_ms = elapsed_ms(undeclare_start);
+
+  auto build_event_start = std::chrono::steady_clock::now();
 
   // Update the parameter event message for any parameters which were only set,
   // and not either declared or undeclared.
@@ -642,13 +700,18 @@ NodeParameters::set_parameters_atomically(const std::vector<rclcpp::Parameter> &
     // This parameter was neither declared nor undeclared.
     parameter_event_msg.changed_parameters.push_back(parameter.to_parameter_msg());
   }
+  build_event_ms = elapsed_ms(build_event_start);
+
+  auto publish_start = std::chrono::steady_clock::now();
 
   // Publish if events_publisher_ is not nullptr, which may be if disabled in the constructor.
   if (nullptr != events_publisher_) {
     parameter_event_msg.stamp = node_clock_->get_clock()->now();
     events_publisher_->publish(parameter_event_msg);
   }
+  publish_ms = elapsed_ms(publish_start);
 
+  log_timing("success");
   return result;
 }
 
